@@ -1,7 +1,8 @@
-import os
+import asyncio
 import json
-from aiohttp import web, ClientSession
-from telegram import Update, Bot, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
+import os
+from aiohttp import ClientSession
+from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler
 
 DB_FILE = "users.json"
@@ -15,8 +16,6 @@ def load_users():
 def save_users(users):
     with open(DB_FILE, "w", encoding="utf-8") as f:
         json.dump(users, f, ensure_ascii=False)
-
-# --- دستورات تلگرام ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -40,10 +39,6 @@ async def setid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     users[user_id] = steam_id
     save_users(users)
     await update.message.reply_text(f"✅ Steam ID شما ثبت شد: {steam_id}")
-
-# (توابع fetch_json و بقیه کدهای کمکی هم مثل قبل)
-
-# --- توابع کمکی (fetch_json, get_hero_name, و ...) ---
 
 async def fetch_json(session, url):
     async with session.get(url) as resp:
@@ -140,8 +135,6 @@ async def check_common_matches(my_id: int, target_id: int, session: ClientSessio
 
     return common_matches
 
-# --- دستورات بات ---
-
 async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.args) != 1:
         await update.message.reply_text("مثال درست: /check 123456789")
@@ -172,6 +165,7 @@ async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for m in matches:
             match_id = m['match_id']
 
+            # تشخیص تیم خودی و حریف
             players = m.get("players", [])
             my_team = None
             target_team = None
@@ -216,7 +210,7 @@ async def match_info_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     async with ClientSession() as session:
         match_detail_url = f"https://api.opendota.com/api/matches/{match_id}"
-        match_detail = await fetch_json(match_detail_url)
+        match_detail = await fetch_json(session, match_detail_url)
         if not match_detail:
             await query.edit_message_text("❌ نتوانستم اطلاعات بازی را دریافت کنم.")
             return
@@ -253,8 +247,6 @@ async def match_info_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         await query.edit_message_text(text)
 
-# --- تنظیم کامندها ---
-
 async def set_commands(app):
     await app.bot.set_my_commands([
         BotCommand("start", "شروع بات"),
@@ -262,59 +254,20 @@ async def set_commands(app):
         BotCommand("check", "چک کردن هم‌بازی")
     ])
 
-# --- متغیرهای محیطی ---
-
-TOKEN = os.getenv("BOT_TOKEN")
-SECRET_TOKEN = os.getenv("WEBHOOK_SECRET_TOKEN")
-PORT = int(os.getenv("PORT", "8080"))
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-
-bot = Bot(TOKEN)
-app_telegram = ApplicationBuilder().token(TOKEN).build()
-
-app_telegram.add_handler(CommandHandler("start", start))
-app_telegram.add_handler(CommandHandler("setid", setid))
-app_telegram.add_handler(CommandHandler("check", check))
-app_telegram.add_handler(CallbackQueryHandler(match_info_callback))
-
-app_telegram.post_init = set_commands
-
-# --- هندلر وب‌هوک ---
-
-async def handle_update(request):
-    # بررسی توکن مخفی تو query string
-    token = request.query.get("token")
-    if token != SECRET_TOKEN:
-        return web.Response(status=403, text="Forbidden")
-
-    if request.content_type != 'application/json':
-        return web.Response(status=415)
-
-    data = await request.json()
-    update = Update.de_json(data, bot)
-    await app_telegram.update_queue.put(update)
-    return web.Response(text="ok")
-
-# --- رویدادهای startup و shutdown ---
-
-async def on_startup(app):
-    await bot.set_webhook(f"{WEBHOOK_URL}?token={SECRET_TOKEN}")
-
-async def on_shutdown(app):
-    await bot.delete_webhook()
-
-# --- تنظیم اپ aiohttp ---
-
-web_app = web.Application()
-web_app.router.add_post("/webhook", handle_update)
-web_app.on_startup.append(on_startup)
-web_app.on_cleanup.append(on_shutdown)
-
-# --- اجرا ---
-
 if __name__ == "__main__":
     import logging
     logging.basicConfig(level=logging.INFO)
-    print("🤖 بات داره با Webhook اجرا میشه...")
 
-    web.run_app(web_app, host="0.0.0.0", port=PORT)
+    TOKEN = "BOT_TOKEN"
+
+    app = ApplicationBuilder().token(TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("setid", setid))
+    app.add_handler(CommandHandler("check", check))
+    app.add_handler(CallbackQueryHandler(match_info_callback))
+
+    app.post_init = set_commands
+
+    print("🤖 بات داره اجرا میشه...")
+    app.run_polling()
