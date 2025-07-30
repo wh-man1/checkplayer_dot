@@ -1,8 +1,7 @@
-import asyncio
-import json
 import os
-from aiohttp import ClientSession
-from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
+import json
+from aiohttp import web, ClientSession
+from telegram import Update, Bot, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler
 
 DB_FILE = "users.json"
@@ -165,7 +164,6 @@ async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for m in matches:
             match_id = m['match_id']
 
-            # تشخیص تیم خودی و حریف
             players = m.get("players", [])
             my_team = None
             target_team = None
@@ -254,20 +252,43 @@ async def set_commands(app):
         BotCommand("check", "چک کردن هم‌بازی")
     ])
 
+TOKEN = os.getenv("BOT_TOKEN")
+PORT = int(os.getenv("PORT", "8080"))
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+
+bot = Bot(TOKEN)
+app_telegram = ApplicationBuilder().token(TOKEN).build()
+
+app_telegram.add_handler(CommandHandler("start", start))
+app_telegram.add_handler(CommandHandler("setid", setid))
+app_telegram.add_handler(CommandHandler("check", check))
+app_telegram.add_handler(CallbackQueryHandler(match_info_callback))
+
+app_telegram.post_init = set_commands
+
+async def handle_update(request):
+    if request.content_type != 'application/json':
+        return web.Response(status=415)
+
+    data = await request.json()
+    update = Update.de_json(data, bot)
+    await app_telegram.update_queue.put(update)
+    return web.Response(text="ok")
+
+async def on_startup(app):
+    await bot.set_webhook(f"{WEBHOOK_URL}/{TOKEN}")
+
+async def on_shutdown(app):
+    await bot.delete_webhook()
+
+web_app = web.Application()
+web_app.router.add_post(f"/{TOKEN}", handle_update)
+web_app.on_startup.append(on_startup)
+web_app.on_cleanup.append(on_shutdown)
+
 if __name__ == "__main__":
     import logging
     logging.basicConfig(level=logging.INFO)
+    print("🤖 بات داره با Webhook اجرا میشه...")
 
-    TOKEN = os.getenv("BOT_TOKEN")
-
-    app = ApplicationBuilder().token(TOKEN).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("setid", setid))
-    app.add_handler(CommandHandler("check", check))
-    app.add_handler(CallbackQueryHandler(match_info_callback))
-
-    app.post_init = set_commands
-
-    print("🤖 بات داره اجرا میشه...")
-    app.run_polling()
+    web.run_app(web_app, host="0.0.0.0", port=PORT)
