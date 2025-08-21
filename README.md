@@ -1,4 +1,4 @@
-# Check Dot Player
+## CHECK PLAYER DOT
 
 A Telegram bot built with Python that checks if two Dota 2 players have played together in recent games.
 
